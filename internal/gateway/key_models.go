@@ -101,20 +101,30 @@ func membersAllowed(who access.Identity, ms []provider.Member) bool {
 	return true
 }
 
-// entryAllowed says the key is shown a model of the catalog — and some
+// keyCatalog holds only one request's group and account lookups. Nothing
+// is shared between keys or kept after permissions or providers change.
+type keyCatalog struct {
+	who      access.Identity
+	find     func(string) (provider.Group, []provider.Member, bool)
+	accounts map[string]permittedAccounts
+	serves   map[string]bool
+}
+
+// allows says the key is shown a model of the catalog — and some
 // account or key it may use serves it (#905): one the provider's
 // accounts are set not to serve (#474) is none of the key's.
-func entryAllowed(who access.Identity, e provider.Entry) bool {
+func (k *keyCatalog) allows(e provider.Entry) bool {
+	who := k.who
 	if !who.Restricted() {
 		return true
 	}
 	if e.Group != "" {
-		g, ms, ok := provider.FindGroup(e.ID)
+		g, ms, ok := k.find(e.ID)
 		if !ok || !groupAllowed(who, g, ms) {
 			return false
 		}
 		for _, m := range ms {
-			if accountServes(who, m.Provider, m.Model) {
+			if k.accountServes(m.Provider, m.Model) {
 				return true
 			}
 		}
@@ -123,7 +133,24 @@ func entryAllowed(who access.Identity, e provider.Entry) bool {
 	if !modelAllowed(who, e.Provider, e.Model) {
 		return false
 	}
-	return accountServes(who, e.Provider, e.Model)
+	return k.accountServes(e.Provider, e.Model)
+}
+
+func (k *keyCatalog) accountServes(p provider.Provider, model string) bool {
+	if len(k.who.Accounts) == 0 {
+		return true
+	}
+	id := p.ID + "/" + model
+	if serves, ok := k.serves[id]; ok {
+		return serves
+	}
+	accounts, read := k.accounts[p.ID]
+	if !read {
+		accounts = accountsFor(k.who, p)
+		k.accounts[p.ID] = accounts
+	}
+	k.serves[id] = accounts.serves(k.who, p, model)
+	return k.serves[id]
 }
 
 // accountServes says some account or key the key may use serves the provider's
@@ -133,15 +160,17 @@ func accountServes(who access.Identity, p provider.Provider, model string) bool 
 	if len(who.Accounts) == 0 {
 		return true
 	}
+	return accountsFor(who, p).serves(who, p, model)
+}
+
+type permittedAccounts struct {
+	refs       []string
+	noAccounts bool
+}
+
+func accountsFor(who access.Identity, p provider.Provider) permittedAccounts {
 	refs := p.AccountIDs()
-	if len(refs) == 0 {
-		// a provider with no account and no key (a local ollama): the
-		// list holds a key to some accounts of the providers it names
-		// (AllowsAccount's rule), so one it names none of serves as it
-		// always did; one it names — an entry kept after its last account
-		// or key went — serves none, holding the key closer
-		return who.AllowsAccount(p.ID, "")
-	}
+	out := permittedAccounts{noAccounts: len(refs) == 0}
 	for _, r := range refs {
 		if !who.AllowsAccount(p.ID, r.ID) {
 			continue
@@ -150,6 +179,21 @@ func accountServes(who access.Identity, p provider.Provider, model string) bool 
 		if r.Key {
 			ref = r.ID // a key's own list is keyed by its fingerprint
 		}
+		out.refs = append(out.refs, ref)
+	}
+	return out
+}
+
+func (a permittedAccounts) serves(who access.Identity, p provider.Provider, model string) bool {
+	if a.noAccounts {
+		// a provider with no account and no key (a local ollama): the
+		// list holds a key to some accounts of the providers it names
+		// (AllowsAccount's rule), so one it names none of serves as it
+		// always did; one it names — an entry kept after its last account
+		// or key went — serves none, holding the key closer
+		return who.AllowsAccount(p.ID, "")
+	}
+	for _, ref := range a.refs {
 		if p.AccountServes(ref, model) {
 			return true
 		}
@@ -163,9 +207,10 @@ func keyAllowed(r *http.Request, es []provider.Entry) []provider.Entry {
 	if !held {
 		return es
 	}
+	k := keyCatalog{who: who, find: provider.GroupFinder(), accounts: map[string]permittedAccounts{}, serves: map[string]bool{}}
 	out := make([]provider.Entry, 0, len(es))
 	for _, e := range es {
-		if entryAllowed(who, e) {
+		if k.allows(e) {
 			out = append(out, e)
 		}
 	}

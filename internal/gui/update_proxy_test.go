@@ -14,8 +14,8 @@ import (
 	"github.com/yetone/magpie/internal/update"
 )
 
-// An update check that failed going direct is tried again as soon as a
-// proxy is set on the Settings page, through it (#294), rather than the
+// An update check that failed through a broken proxy is tried again as soon
+// as the proxy is corrected on the Settings page (#294), rather than the
 // error staying up till the next check six hours on.
 func TestSettingsProxyRechecksAFailedUpdate(t *testing.T) {
 	h := t.TempDir()
@@ -28,23 +28,30 @@ func TestSettingsProxyRechecksAFailedUpdate(t *testing.T) {
 	}
 	var hits atomic.Int32
 	px := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Host == "feed.magpie.invalid" {
+		if r.URL.Host == "192.0.2.1" {
 			hits.Add(1)
 		}
 		json.NewEncoder(w).Encode(update.Release{Version: "9.9.9"})
 	}))
 	defer px.Close()
-	// direct, the feed is nowhere to be found
-	if err := settings.Save(settings.Settings{Proxy: "direct"}); err != nil {
+	var failed atomic.Int32
+	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		failed.Add(1)
+		http.Error(w, "proxy unavailable", http.StatusBadGateway)
+	}))
+	defer broken.Close()
+	// Both requests go to local proxies. A reserved public IP needs no
+	// DNS lookup and is never classified as a host on the user's LAN.
+	if err := settings.Save(settings.Settings{Proxy: broken.URL}); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("MAGPIE_UPDATE_FEED", "http://feed.magpie.invalid/api/latest")
+	t.Setenv("MAGPIE_UPDATE_FEED", "http://192.0.2.1/api/latest")
 	old := updates
 	updates = &updater{}
 	defer func() { updates = old }()
 	updates.check()
-	if j := updates.json(); j.State != "error" {
-		t.Fatalf("direct: %+v", j)
+	if j := updates.json(); j.State != "error" || failed.Load() != 1 {
+		t.Fatalf("broken proxy: %+v, %d requests", j, failed.Load())
 	}
 
 	rec := httptest.NewRecorder()

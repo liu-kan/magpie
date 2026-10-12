@@ -45,6 +45,12 @@ func TestAsideOfflineDisconnectRestoresWithoutDaemon(t *testing.T) {
 	}
 	asideSet = func(string, string) error { t.Fatal("offline disconnect set daemon"); return nil }
 	t.Setenv("PATH", t.TempDir())
+	// The dsh id gives the fixture an install command. Its desktop app
+	// would also make CLIMissing false, so no app comes from this machine.
+	apps := t.TempDir()
+	oldFolders := appFolders
+	appFolders = func() []string { return []string{apps} }
+	t.Cleanup(func() { appFolders = oldFolders })
 	if proc.FindTool(a.Bin) != "" {
 		t.Fatal("fixture must have no Aside executable")
 	}

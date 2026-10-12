@@ -13,6 +13,9 @@ import (
 // keepBackups is how many changes' backups are kept.
 const keepBackups = 30
 
+// backupNow labels a backup; tests hold it still to cover clock collisions.
+var backupNow = time.Now
+
 // BackupDir is where a file is copied before magpie first changes it in a
 // change: one folder a change, named by when, a folder an agent in it.
 func BackupDir() string { return filepath.Join(settings.Dir(), "backups") }
@@ -28,24 +31,45 @@ func newBackups() *backups {
 	return &backups{done: map[string]bool{}}
 }
 
+// newBackupDir reserves a change's own folder even when its clock label
+// matches an earlier change's. The timestamp is for ordering, not identity.
+func newBackupDir() (string, error) {
+	if err := os.MkdirAll(BackupDir(), 0o700); err != nil {
+		return "", err
+	}
+	return os.MkdirTemp(BackupDir(), backupNow().Format("2006-01-02_15-04-05.000")+"-")
+}
+
+func (b *backups) folder() (string, error) {
+	if b.dir == "" {
+		dir, err := newBackupDir()
+		if err != nil {
+			return "", err
+		}
+		b.dir = dir
+	}
+	return b.dir, nil
+}
+
 // keep copies path aside, as the agent had it, before it is written; a
 // file that isn't there has nothing to keep.
 func (b *backups) keep(agent, path string) error {
 	if b.done[path] {
 		return nil
 	}
-	b.done[path] = true
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
+		b.done[path] = true
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if b.dir == "" {
-		b.dir = filepath.Join(BackupDir(), time.Now().Format("2006-01-02_15-04-05.000"))
+	dir, err := b.folder()
+	if err != nil {
+		return err
 	}
-	dst := filepath.Join(b.dir, fileName(agent), filepath.Base(path))
+	dst := filepath.Join(dir, fileName(agent), filepath.Base(path))
 	if _, err := os.Stat(dst); err == nil {
 		// another file by that name (each dsh profile's cordis.patch.yml):
 		// kept under its folder's name
@@ -54,7 +78,11 @@ func (b *backups) keep(agent, path string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(dst, data, 0o600)
+	if err := os.WriteFile(dst, data, 0o600); err != nil {
+		return err
+	}
+	b.done[path] = true
+	return nil
 }
 
 // prune leaves the newest keepBackups, and every one that holds a skill

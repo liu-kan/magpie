@@ -133,10 +133,20 @@ type Identity struct {
 	Limit          *Limit
 	Models         []string
 	Accounts       []string
+
+	// Request permissions are compiled before the identity enters its
+	// context, then only read, even when copies are used concurrently.
+	models   *modelMatcher
+	accounts map[string]map[string]bool
 }
+
 type contextKey struct{}
 
 func WithIdentity(ctx context.Context, who Identity) context.Context {
+	who.Models = slices.Clone(who.Models)
+	who.Accounts = slices.Clone(who.Accounts)
+	who.models = compileModels(who.Models)
+	who.accounts = compileAccounts(who.Accounts)
 	return context.WithValue(ctx, contextKey{}, who)
 }
 func Caller(ctx context.Context) Identity { who, _ := ctx.Value(contextKey{}).(Identity); return who }

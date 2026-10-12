@@ -235,6 +235,7 @@ func TestRemoveFoundServerEveryAgent(t *testing.T) {
 // file is backed up first.
 func TestRemoveFoundEntryEveryFormat(t *testing.T) {
 	sandbox(t)
+	freezeBackupClock(t)
 	gone := &Server{Name: "gone", Transport: "stdio", Command: "gone-mcp", Args: []string{"--x"}}
 	mine := &Server{Name: "mine", Transport: "stdio", Command: "my-mcp"}
 	for fm := fmtClaude; fm <= fmtZed; fm++ {

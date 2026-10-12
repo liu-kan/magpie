@@ -333,7 +333,7 @@ func Put(b *Bundle) (*Result, error) {
 		}
 
 		// every skill's files are ready: out with the old ones
-		aside := filepath.Join(BackupDir(), time.Now().Format("2006-01-02_15-04-05.000"), "skills")
+		oldSkills := newBackups()
 		out := func(name string) error {
 			p := skillDir(name)
 			fi, err := os.Lstat(p)
@@ -343,6 +343,11 @@ func Put(b *Bundle) (*Result, error) {
 			if linkEntry(fi) {
 				return os.Remove(p) // a folder of the user's: only the link goes
 			}
+			dir, err := oldSkills.folder()
+			if err != nil {
+				return err
+			}
+			aside := filepath.Join(dir, "skills")
 			if err := os.MkdirAll(aside, 0o700); err != nil {
 				return err
 			}

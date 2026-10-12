@@ -142,6 +142,8 @@ var zero time.Time
 // both, and each proxy is given one transport of its own, kept.
 func TestWith(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// This is a public vendor fixture, independent of the machine's DNS.
+	stubLookup(t, map[string]string{"api.openai.com": "203.0.113.10"})
 	settings.Save(settings.Settings{Proxy: "127.0.0.1:6152"})
 	u := &url.URL{Scheme: "https", Host: "api.openai.com"}
 	req := func(choice string) *http.Request {

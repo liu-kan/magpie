@@ -33,6 +33,15 @@ agents RTK, a CLI that cuts shell output down before the model reads it.
 
 ## Constraints and failure behavior
 
+- Backup folders are reserved atomically with a time prefix and a unique
+  suffix (`newBackupDir`). Independent changes never share one when the
+  clock matches or goes back; a batch's files or skills still share that
+  batch's folder. A failed file backup is not marked kept, so a retry must
+  save it before the file may be changed. Existing backup folders and their
+  retention rules remain readable. `TestBackupsKeepIndependentChanges`,
+  `TestBackupFailureCanRetry`, `TestSkillBackupsKeepEachVersion` and
+  `TestSkillRemovalBackupsStaySeparate` hold the clock still or force a
+  failed backup to exercise these guarantees.
 - magpie takes away only what `Applied` or its mark says it wrote. A folder of the user's with a skill's name is never touched. The user's own fields in an MCP entry are kept.
 - An edit never silently loses. When an agent's copy of a skill and the library both changed, the newest edit wins, and the losing one is kept with the backups.
 - An update from GitHub never silently replaces a skill changed here. It is refused, or skipped in an update of several, until the user says to replace it, and the version replaced goes to the backups.

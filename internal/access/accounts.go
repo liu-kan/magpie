@@ -70,7 +70,12 @@ func (who Identity) AllowsAccount(pid, ref string) bool {
 		return true
 	}
 	pid = strings.ToLower(strings.TrimSpace(pid))
-	key := pid + "/" + strings.ToLower(strings.TrimSpace(ref))
+	ref = strings.ToLower(strings.TrimSpace(ref))
+	if who.accounts != nil {
+		refs, named := who.accounts[pid]
+		return !named || refs[ref]
+	}
+	key := pid + "/" + ref
 	named := false
 	for _, a := range who.Accounts {
 		if a = strings.ToLower(strings.TrimSpace(a)); a == key {
@@ -80,4 +85,22 @@ func (who Identity) AllowsAccount(pid, ref string) bool {
 		}
 	}
 	return !named
+}
+
+func compileAccounts(accounts []string) map[string]map[string]bool {
+	if len(accounts) == 0 {
+		return nil
+	}
+	out := make(map[string]map[string]bool)
+	for _, a := range accounts {
+		p, ref, ok := strings.Cut(strings.ToLower(strings.TrimSpace(a)), "/")
+		if !ok {
+			continue
+		}
+		if out[p] == nil {
+			out[p] = make(map[string]bool)
+		}
+		out[p][ref] = true
+	}
+	return out
 }

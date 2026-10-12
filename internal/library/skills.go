@@ -1390,7 +1390,7 @@ func skillsAgents(names, agents []string, on bool) (*Result, error) {
 // is kept aside with the backups, never just deleted.
 func RemoveSkill(name string) (*Result, error) {
 	return change(func(l *Library) error {
-		return removeSkill(l, name, time.Now().Format("2006-01-02_15-04-05.000"))
+		return removeSkill(l, name, newBackups())
 	})
 }
 
@@ -1405,9 +1405,9 @@ func RemoveSkills(names []string) (*Result, error) {
 	names = slices.Compact(slices.Sorted(slices.Values(names)))
 	var failed []Problem
 	res, err := change(func(l *Library) error {
-		stamp := time.Now().Format("2006-01-02_15-04-05.000")
+		b := newBackups()
 		for _, name := range names {
-			if err := removeSkill(l, name, stamp); err != nil {
+			if err := removeSkill(l, name, b); err != nil {
 				failed = append(failed, Problem{What: "skill:" + name, Error: err.Error()})
 			}
 		}
@@ -1423,9 +1423,9 @@ func RemoveSkills(names []string) (*Result, error) {
 }
 
 // removeSkill takes a skill out of l, its folder moved aside to the backup
-// stamped so, or its link to a folder of the user's taken away. The entry
+// for this change, or its link to a folder of the user's taken away. The entry
 // goes only once its folder has.
-func removeSkill(l *Library, name, stamp string) error {
+func removeSkill(l *Library, name string, b *backups) error {
 	i := slices.IndexFunc(l.Skills, func(s *Skill) bool { return s.Name == name })
 	if i < 0 {
 		return fmt.Errorf("no skill called %s", name)
@@ -1440,7 +1440,11 @@ func removeSkill(l *Library, name, stamp string) error {
 			return err
 		}
 	default:
-		aside := filepath.Join(BackupDir(), stamp, "skills", name)
+		dir, err := b.folder()
+		if err != nil {
+			return err
+		}
+		aside := filepath.Join(dir, "skills", name)
 		if err := os.MkdirAll(filepath.Dir(aside), 0o700); err != nil {
 			return err
 		}
@@ -1853,13 +1857,11 @@ func (e *leftBehind) Unwrap() error { return e.err }
 // setAside moves an agent's own skill (a folder, or a link) out of its
 // way, into a backup of its own: nothing of the user's is just deleted.
 func setAside(agent, p string) (string, error) {
-	dst := filepath.Join(BackupDir(), time.Now().Format("2006-01-02_15-04-05.000"), fileName(agent), "skills", filepath.Base(p))
-	for i := 2; ; i++ {
-		if _, err := os.Lstat(dst); errors.Is(err, fs.ErrNotExist) {
-			break
-		}
-		dst = filepath.Join(filepath.Dir(dst), fmt.Sprintf("%s-%d", filepath.Base(p), i))
+	dir, err := newBackupDir()
+	if err != nil {
+		return "", err
 	}
+	dst := filepath.Join(dir, fileName(agent), "skills", filepath.Base(p))
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return "", err
 	}

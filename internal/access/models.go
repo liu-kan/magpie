@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 )
 
 // CleanModels is a key's model list as kept (#882): each pattern trimmed,
@@ -43,11 +44,70 @@ func (who Identity) Allows(ids ...string) bool {
 		return true
 	}
 	for _, id := range ids {
-		if id != "" && ModelAllowed(who.Models, id) {
+		if id == "" {
+			continue
+		}
+		if who.models != nil {
+			if who.models.allows(id) {
+				return true
+			}
+		} else if ModelAllowed(who.Models, id) {
 			return true
 		}
 	}
 	return false
+}
+
+// modelMatcher separates exact ids from globs, compiled once per request.
+type modelMatcher struct {
+	exact map[string]bool
+	globs []*regexp.Regexp
+}
+
+func compileModels(patterns []string) *modelMatcher {
+	if len(patterns) == 0 {
+		return nil
+	}
+	m := &modelMatcher{exact: make(map[string]bool, len(patterns))}
+	for _, p := range patterns {
+		m.exact[foldModel(p)] = true
+		if strings.Contains(p, "*") {
+			m.globs = append(m.globs, globRe(p))
+		}
+	}
+	return m
+}
+
+func (m *modelMatcher) allows(id string) bool {
+	if m.exact[foldModel(id)] {
+		return true
+	}
+	for _, re := range m.globs {
+		if re.MatchString(id) {
+			return true
+		}
+	}
+	return false
+}
+
+// foldModel gives EqualFold's equivalence classes one spelling, including
+// long s and final sigma, which strings.ToLower alone tells apart.
+func foldModel(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 128 {
+			if r >= 'a' && r <= 'z' {
+				return r - ('a' - 'A')
+			}
+			return r
+		}
+		first := r
+		for next := unicode.SimpleFold(r); next != r; next = unicode.SimpleFold(next) {
+			if next < first {
+				first = next
+			}
+		}
+		return first
+	}, s)
 }
 
 // ModelAllowed says id ("<provider>/<model>") matches one of patterns,

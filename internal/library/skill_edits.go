@@ -148,7 +148,11 @@ func skipInSkill(name string) bool {
 // keepLibrarySkill copies the library's skill to the backups before an
 // edit is taken over it.
 func keepLibrarySkill(name, lib string) (string, error) {
-	dst := filepath.Join(BackupDir(), time.Now().Format("2006-01-02_15-04-05.000"), "library", "skills", name)
+	dir, err := newBackupDir()
+	if err != nil {
+		return "", err
+	}
+	dst := filepath.Join(dir, "library", "skills", name)
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return "", err
 	}

@@ -105,7 +105,11 @@ func (l *Library) editState(s *Skill, targets []*Target) (edited, known bool) {
 // keepReplaced moves the library's version of a skill an update replaces
 // to the backups, where it is found as an edit taken over is.
 func keepReplaced(name, old string) (string, error) {
-	dst := filepath.Join(BackupDir(), time.Now().Format("2006-01-02_15-04-05.000"), "library", "skills", name)
+	dir, err := newBackupDir()
+	if err != nil {
+		return "", err
+	}
+	dst := filepath.Join(dir, "library", "skills", name)
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return "", err
 	}

@@ -28,6 +28,34 @@ served by a plugin are in [Provider and plugin ownership](provider-plugins.md).
 | Prompt | What each request's prompt held, part by part: the agent's system prompt, tool definitions (an MCP server's tools as one item), instruction files and skills, files its tools read, their other output, and the conversation. `inspectPrompt` reads it from the body as the agent sent it, before translation; `calibrated` scales the estimate to the prompt the vendor counted and sets the window of the model that answered. The route keeps names and sizes only, never the text, so the routing history on disk holds none. For the card's text (masaka on Discord), the trace keeps the last `promptBodies` (10) request bodies in memory only (at most 32 MiB each, 64 MiB together), masked as the vendor got them; for a model let have it unmasked, the masked copy is kept all the same. `PromptText` reads a part's items and their text from that body again (`prompt_text.go`), served to the GUI as `/api/context/text`; once a body is dropped, or magpie quits, its text is gone. It goes on the trace as `Route.Prompt`, with `Route.Conv` naming a conversation that has no session id. The GUI's `/api/context` scores each agent from it (`internal/gui/context.go`). | [`prompt.go`](../../internal/gateway/prompt.go) |
 | Vertex AI | A [Google Vertex AI provider](providers-accounts.md#responsibilities-and-sources-of-truth) speaks Gemini alone. A request goes to `<base>/publishers/google/models/<model>:streamGenerateContent?alt=sse` (`provider.VertexPath`, `upstreamPath`), the model named as the user's upstream name for it says (`UpstreamNameIn`, which the usage log's endpoint names too), with no `model` or `stream` field in its body (`passthrough`, `forwardOnce`, `geminiRequest`). A Gemini client's request is relayed as it came, its own `thinkingConfig`, `safetySettings` and the rest kept: streamed there, asked whole to `:generateContent` (`provider.VertexWholePath`), which answers one JSON body (Factory's rule of translating a whole request, as its route only streams, isn't Vertex AI's). Every other API's is translated (`buildFor`, `buildVertex`) and its stream read by `codeAssistDecoder`, which gives thought parts as reasoning, never as the answer's text. Effort: `vertexEffort` fits it to the model's levels, reasoning turned off going as `minimal` fitted the same way, and holds a model whose levels aren't known to `low`…`high`. `vertexThinking` sends Gemini 3 a `thinkingLevel` (`includeThoughts` false with reasoning off) and 2.5 a `thinkingBudget` in the model's range (`vertexBudgets`): turned off, the budget that stops its thinking, or Pro's least, as Pro can't stop. Thought signatures are every Gemini path's (#1445): a call's signature reaches the client in its id (`signedID`) and goes back on the call it came on, while a call with none in a step Vertex AI signed goes without; a step with nothing to give back has every call sent `skip_thought_signature_validator`. A 400 `Invalid thought signature.` is asked again with every call sent so (`withoutSignatures`), for that request only. A 400 refusing `minimal` (`geminiRefusedLevel`) is asked again at the model's lowest other level (`onEffort`), and `markUnfit(offRefused)` keeps that level until magpie restarts. Both retries are the translated path's. Vertex AI's own Google Search grounding isn't used: `searchHosts` names only `generativelanguage.googleapis.com` for Gemini, so magpie searches for it (`search.go`). | [`vertex.go`](../../internal/gateway/vertex.go), [`gateway.go`](../../internal/gateway/gateway.go), [`codeassist.go`](../../internal/gateway/codeassist.go), [`gemini.go`](../../internal/gateway/gemini.go), [`gemini_signature.go`](../../internal/gateway/gemini_signature.go), [`search.go`](../../internal/gateway/search.go) |
 
+## Gateway key permissions and model lists
+
+[`access.WithIdentity`](../../internal/access/access.go) takes a request's
+permission snapshot: its model patterns and account list are copied and
+compiled before the identity enters the context. Copies of that identity
+only read the matchers. `Identity.Allows` and `AllowsAccount` retain their
+value receivers; an identity constructed outside a request still checks its
+lists directly. Exact model ids keep `EqualFold` matching, globs keep their
+case-insensitive matching across slashes, and an account list only restricts
+the providers it names. Clearing the models for magpie's own choice leaves
+the accounts held as before.
+
+[`keyAllowed`](../../internal/gateway/key_models.go) applies those permissions
+to OpenAI, Codex and Gemini model lists. It reuses one
+[`provider.GroupFinder`](../../internal/provider/group.go) for the list and
+keeps the permitted account refs and their model checks for that request.
+Group members include unlisted providers and nested groups; naming a group
+does not lift the key's account restrictions. No list or decision is cached
+across requests or gateway keys, so a permission change or an account removed
+takes effect on the next request.
+
+`TestKeyCatalogPermissionsStayCurrent` exercises the three list formats
+through `lanGuard` and `Handler`, with different keys, changed permissions
+and a removed account. `TestCallerPermissionsMatchIdentity` and
+`TestCallerPermissionsConcurrentCopies` check matching and concurrent reads.
+`BenchmarkKeyCatalog` measures filtering and HTTP listing with 1,000 provider
+models, derived groups and ten restricted keys.
+
 ## Runtime path
 
 1. `handle(proto)` reads the body and the model (`requestBody`, `requestModel`), then calls `serveAgent`. Every route that reads an agent's body (each API, count_tokens, Gemini's, embeddings, images, videos, System One, the Codex backend path) reads it through `readBoundedRequestBody` in [`request_bounds.go`](../../internal/gateway/request_bounds.go). It decodes a `Content-Encoding` of `gzip` or `zstd` (`decodedBody`; Codex sends zstd to a custom provider's `/v1/responses` too, #1223) and drops the header, so the provider is sent plain JSON. The size limit holds for the decoded bytes (413), and any other encoding is refused 415. `keyLimited` reads a limited key's compressed body the same way, so its reservation is the decoded size. `serveAgent` runs the [middleware](gateway-middleware.md) chain, then `serve`.
