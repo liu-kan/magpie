@@ -70,6 +70,24 @@ keeps a download alive through a proxy change.
 and a virtual clock to cover headers, bodies, caller cancellation and a
 download longer than the feed budget.
 
+Source builds (`dev`, dirty versions and Git descriptions) also show the
+release in Settings → About's Version row, using the ordinary update
+text, Download and Check. A check alone, including a scheduled check,
+does not download a release over the source build. Download first shows
+the existing release-notes confirmation sheet with a notice that the
+development build and its custom changes will be replaced, while its
+configuration is kept. Later or Escape changes nothing.
+
+`POST /api/update/install` accepts `replaceSource`, the exact release
+version that confirmation named. `updater.replaceSource` accepts it only
+from the source state for that current release; a changed version requires
+another check and confirmation. The acknowledged release then uses the
+ordinary hash-checked download, staging and restart/install paths. Clock
+checks cannot start this download, and a newer release cannot silently
+replace one already confirmed and staged. `TestSourceUpdateNeedsConfirmation`
+and [`update-source.test.cjs`](../../internal/gui/tests/update-source.test.cjs)
+cover the backend and both page engines, in every GUI language.
+
 ### Streamed output speed
 
 Usage rows and aggregates use `Record.Decode` and `DecodeOf` in

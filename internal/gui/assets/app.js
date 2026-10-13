@@ -4212,14 +4212,17 @@ function noteLink(text, url) {
 // Settings › About): every release's notes after this one up to it, newest
 // first, with Restart to update and Later. The update's own notes show at
 // once; the releases between come in after. go restarts. The tray's panel,
-// with no room for a dialog, restarts as before.
-async function confirmUpdate(u, go) {
-  if (mode === "panel" || !$("#modal").hidden) return go();
+// with no room for a dialog, restarts as before. Replacing a source build
+// first asks before downloading, including from the panel.
+async function confirmUpdate(u, go, replaceSource = false) {
+  if (replaceSource) {
+    if (!$("#modal").hidden) return;
+  } else if (mode === "panel" || !$("#modal").hidden) return go();
   const ed = el("div", "editor whatsnew update-ask");
   const head = el("div", "ehead");
   const title = el("b", "", t("Update to {v}", { v: "v" + u.latest }));
   head.append(title);
-  if (u.current) head.append(el("span", "wn-since", t("What changed since {v}", { v: "v" + u.current })));
+  if (u.current && !replaceSource) head.append(el("span", "wn-since", t("What changed since {v}", { v: "v" + u.current })));
   const box = el("div", "wn-list");
   const draw = (releases) => {
     box.replaceChildren();
@@ -4241,10 +4244,12 @@ async function confirmUpdate(u, go) {
   const bar = el("div", "bar");
   const later = el("button", "text", t("Later"));
   later.onclick = (e) => { e.stopPropagation(); closeConfirmAsk(); };
-  const ok = el("button", "text primary", t("Restart to update"));
+  const ok = el("button", "text primary", t(replaceSource ? "Download" : "Restart to update"));
   ok.onclick = (e) => { e.stopPropagation(); closeConfirmAsk(); go(); };
   bar.append(el("span", "grow"), later, ok);
-  ed.append(head, box, bar);
+  ed.append(head);
+  if (replaceSource) ed.append(el("p", "lib-confirm", t("You are running a development build ({v}). Updating to release {latest} replaces this build and its custom changes. Your configuration is kept.", { v: u.current, latest: u.latest })));
+  ed.append(box, bar);
   confirmAsk = ed;
   openModal(ed);
   $("#modal").classList.add("lib");
@@ -23231,6 +23236,25 @@ async function renderUpdate(r, u) {
     setTimeout(() => { if (r.isConnected && (updateSeq.get(r) || 0) === seen) renderUpdate(r); }, ms);
   };
   switch (u.state) {
+    case "source": {
+      sub.textContent = t("{v} is out", { v: u.latest }) + " · " + t("Development build");
+      btn(t("Download"), () => confirmUpdate(u, async () => {
+        if (updateBusy) return;
+        updateBusy = true;
+        const mine = (updateSeq.get(r) || 0) + 1;
+        updateSeq.set(r, mine);
+        for (const b of val.querySelectorAll("button")) { b.disabled = true; b.classList.add("busy"); }
+        let next;
+        try { next = await api(updatePath("update/install"), { ...installFrom(), replaceSource: u.latest }); }
+        catch (e) { next = { state: "error", current: u.current, error: t(e.message) }; }
+        updateBusy = false;
+        if (!r.isConnected || (updateSeq.get(r) || 0) !== mine) return;
+        updateSeq.set(r, mine + 1);
+        renderUpdate(r, next);
+      }, true));
+      btn(t("Check"), check);
+      break;
+    }
     case "ready": {
       sub.textContent = t("{v} is downloaded", { v: u.latest }) + (u.error ? " · " + u.error : "");
       // a failed install says why in full, and offers the release page to
@@ -23339,7 +23363,7 @@ async function renderUpdate(r, u) {
       sub.textContent = prefs && prefs.noAutoUpdate ? t("Automatic updates are off") : "";
       btn(t("Check"), check);
       break;
-    default: // built from source
+    default: // an unknown update state
       sub.textContent = "";
   }
   if (kept && !pageShown) kept.remove();

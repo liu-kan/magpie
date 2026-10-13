@@ -41,12 +41,13 @@ type updater struct {
 	aside  string // Windows: where install moved the running exe, to put back
 	// a version this computer wouldn't start (Smart App Control, #894),
 	// which the clock's checks don't download again.
-	blocked *update.Blocked
-	checkIn *updateCheck // the current check, kept through its download
-	asked   time.Time    // when the feed was last asked, by the clock or a click
-	done    int64        // downloading: bytes so far, of total (0 when unknown)
-	total   int64
-	onReady func(version string)
+	blocked       *update.Blocked
+	checkIn       *updateCheck // the current check, kept through its download
+	sourceVersion string       // the release explicitly chosen to replace a source build
+	asked         time.Time    // when the feed was last asked, by the clock or a click
+	done          int64        // downloading: bytes so far, of total (0 when unknown)
+	total         int64
+	onReady       func(version string)
 	// the waiting update's notes follow the pages' language (freecss on
 	// Discord): the one they last asked in, else the app's
 	lang     string    // the pages' language, "" before one asked
@@ -276,6 +277,21 @@ func (u *updater) proxyChanged() {
 	go u.run(c)
 }
 
+// replaceSource starts the release the reader confirmed, never a clock's
+// download or a different release that appeared while the dialog was open.
+func (u *updater) replaceSource(version string) bool {
+	u.mu.Lock()
+	if update.Released(Version) || u.state != "source" || u.latest == nil || u.latest.Version != version {
+		u.mu.Unlock()
+		return false
+	}
+	u.sourceVersion = version
+	c := u.beginLocked(false)
+	u.mu.Unlock()
+	go u.run(c)
+	return true
+}
+
 func (u *updater) run(c *updateCheck) {
 	defer func() {
 		c.cancel()
@@ -309,12 +325,18 @@ func (u *updater) run(c *updateCheck) {
 		u.state, u.err = "error", err.Error()
 		return
 	}
+	source := !update.Released(Version)
+	if source && (c.byClock || rel.Version != u.sourceVersion) {
+		if u.staged != "" {
+			u.state = "ready" // keep the release that was confirmed, already downloaded
+		} else {
+			u.latest, u.notesIn, u.state = rel, lang, "source"
+		}
+		return
+	}
 	u.latest, u.notesIn = rel, lang
 	switch {
-	case !update.Released(Version):
-		u.state = "source"
-		return
-	case !update.Newer(rel.Version, Version):
+	case !source && !update.Newer(rel.Version, Version):
 		u.state = "latest"
 		return
 	case u.bundle == "" && u.exe == "":
@@ -550,7 +572,8 @@ func updateRoutes(mux *http.ServeMux, w Windows) {
 	// The window's page names the tab it is on, to come back to it.
 	mux.HandleFunc("POST /api/update/install", func(rw http.ResponseWriter, r *http.Request) {
 		var in struct {
-			View string `json:"view"`
+			View          string `json:"view"`
+			ReplaceSource string `json:"replaceSource"` // the release the source-build confirmation named
 			// When: "now" restarts whatever is in flight, "cancel" stops
 			// a restart waiting; else a busy gateway is waited for (#577)
 			When string `json:"when"`
@@ -558,6 +581,14 @@ func updateRoutes(mux *http.ServeMux, w Windows) {
 		_ = json.NewDecoder(r.Body).Decode(&in)
 		if in.When == "cancel" {
 			updates.cancelWait()
+			writeJSON(rw, updates.json())
+			return
+		}
+		if in.ReplaceSource != "" {
+			if !updates.replaceSource(in.ReplaceSource) {
+				fail(rw, errors.New("The update changed. Check again before replacing this development build."))
+				return
+			}
 			writeJSON(rw, updates.json())
 			return
 		}
