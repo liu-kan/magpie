@@ -132,8 +132,23 @@ func (p Provider) OwnPaused() bool {
 }
 
 // AlsoOn is a signed-in agent's other accounts that are on, each as a
-// provider of its own, in the order they were saved.
+// provider of its own, in the order they were saved. Each keeps what the
+// user set on the provider, as p has it from All: its queue, limits,
+// routing and models (withPicks). A Claude or Codex account is p with
+// another sign-in, and had them always; one a sign-in of its own makes
+// afresh had none, and a second WorkBuddy AI account queued 62s with the
+// wait set to 1s (#1899).
 func (p Provider) AlsoOn() []Provider {
+	out := p.alsoOn()
+	for i, q := range out {
+		out[i] = withPicks(q, p)
+	}
+	return out
+}
+
+// alsoOn is AlsoOn as each sign-in makes its accounts, without the
+// provider's settings.
+func (p Provider) alsoOn() []Provider {
 	if p.IsPlugin() {
 		return pluginAlsoOn(*p.Account.plugin)
 	}

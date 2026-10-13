@@ -47,6 +47,10 @@ func TestKeptLoginStandsAtItsPlace(t *testing.T) {
 	if got := provider.InUseLogin("codex"); got != "me@example.com" {
 		t.Fatalf("in use %q", got)
 	}
+	// the account a model's note names as first (#1957) is the one tried
+	if got := provider.FirstLogin("codex"); got != "me@example.com" {
+		t.Fatalf("first %q", got)
+	}
 	// let go, Codex is signed in to the first again, and it goes first
 	if err := provider.SetKeepLogin("codex", false); err != nil {
 		t.Fatal(err)

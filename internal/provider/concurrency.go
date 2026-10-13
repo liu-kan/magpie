@@ -48,9 +48,9 @@ const (
 
 // LaneLimit is how many requests may be out at once on p's key or
 // account, 0 for no limit: its own (AccountConcurrency), else the
-// provider's (Concurrency). An account made afresh beside the agent's own
-// (AlsoOn) carries none of the provider's settings: they are read from
-// providers.json then.
+// provider's (Concurrency). An account not had from All or AlsoOn (made
+// afresh by its sign-in) carries none of the provider's settings: they are
+// read from providers.json then.
 func (p Provider) LaneLimit() int {
 	ref := ""
 	switch {
@@ -185,9 +185,9 @@ func normalAccountConcurrency(m map[string]int) map[string]int {
 const MaxRPMLimit = 10000
 
 // RPMLimit is how many requests a minute each of p's keys or accounts may
-// send the vendor, 0 for no limit: the provider's MaxRPM. An account made
-// afresh beside the agent's own (AlsoOn) carries none of the provider's
-// settings: it is read from providers.json then.
+// send the vendor, 0 for no limit: the provider's MaxRPM. An account not
+// had from All or AlsoOn (made afresh by its sign-in) carries none of the
+// provider's settings: it is read from providers.json then.
 func (p Provider) RPMLimit() int {
 	n := p.MaxRPM
 	if n == 0 && p.Account != nil {
