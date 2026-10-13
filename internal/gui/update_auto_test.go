@@ -61,9 +61,11 @@ func TestUpdateDue(t *testing.T) {
 func TestUpdateAskedAt(t *testing.T) {
 	u := &updater{}
 	before := time.Now()
-	if !u.begin() {
+	c := u.begin(false)
+	if c == nil {
 		t.Fatal("not begun")
 	}
+	defer c.cancel()
 	if u.asked.Before(before) {
 		t.Fatalf("asked at %v, before %v", u.asked, before)
 	}

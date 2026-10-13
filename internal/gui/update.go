@@ -40,12 +40,11 @@ type updater struct {
 	staged string
 	aside  string // Windows: where install moved the running exe, to put back
 	// a version this computer wouldn't start (Smart App Control, #894),
-	// which the clock's checks don't download again; byClock, the check
-	// under way is the clock's
+	// which the clock's checks don't download again.
 	blocked *update.Blocked
-	byClock bool
-	asked   time.Time // when the feed was last asked, by the clock or a click
-	done    int64     // downloading: bytes so far, of total (0 when unknown)
+	checkIn *updateCheck // the current check, kept through its download
+	asked   time.Time    // when the feed was last asked, by the clock or a click
+	done    int64        // downloading: bytes so far, of total (0 when unknown)
 	total   int64
 	onReady func(version string)
 	// the waiting update's notes follow the pages' language (freecss on
@@ -63,6 +62,14 @@ type updater struct {
 	whenIdle func() bool
 	onWait   func()
 	loops    sync.WaitGroup // the waits going on
+}
+
+// updateCheck owns a check's cancellation and origin. A replaced check's
+// late answer must not change the new one's state or start a download.
+type updateCheck struct {
+	ctx     context.Context
+	cancel  context.CancelFunc
+	byClock bool
 }
 
 type updateJSON struct {
@@ -117,11 +124,12 @@ func (u *updater) start() {
 	}()
 }
 
-// bundleOf and executable are update.Bundle and update.Executable; tests
-// stand in for them.
+// Tests stand in for these update operations, including a feed whose
+// answer arrives after its check was canceled.
 var (
-	bundleOf   = update.Bundle
-	executable = update.Executable
+	bundleOf     = update.Bundle
+	executable   = update.Executable
+	latestUpdate = update.LatestIn
 )
 
 // place takes what an update replaces on goos: the .app the binary is in,
@@ -182,19 +190,16 @@ var (
 
 // check asks the feed and, when it can, stages the new version.
 func (u *updater) check() {
-	if u.begin() {
-		u.run()
+	if c := u.begin(false); c != nil {
+		u.run(c)
 	}
 }
 
 // checkByClock is check, by the clock rather than a click: a version this
 // computer wouldn't start is left as it is.
 func (u *updater) checkByClock() {
-	if u.begin() {
-		u.mu.Lock()
-		u.byClock = true
-		u.mu.Unlock()
-		u.run()
+	if c := u.begin(true); c != nil {
+		u.run(c)
 	}
 }
 
@@ -202,8 +207,8 @@ func (u *updater) checkByClock() {
 // so a newer version out since is the one restarted into. It waits for
 // the feed a little while; a newer version is then downloading.
 func (u *updater) recheck() {
-	if u.begin() {
-		go u.run()
+	if c := u.begin(false); c != nil {
+		go u.run(c)
 	}
 	for range 50 {
 		u.mu.Lock()
@@ -234,28 +239,68 @@ func (u *updater) freshen() {
 // begin marks a check as under way, unless one is. One with a version
 // already downloaded checks too: a newer one out since takes its place,
 // so the restart goes straight to the latest.
-func (u *updater) begin() bool {
+func (u *updater) begin(byClock bool) *updateCheck {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if u.state == "checking" || u.state == "downloading" {
-		return false
+		return nil
 	}
-	u.state, u.err, u.retry, u.mirror, u.asked, u.byClock = "checking", "", false, "", time.Now(), false
-	return true
+	return u.beginLocked(byClock)
 }
 
-func (u *updater) run() {
+// beginLocked registers the cancellation before handing a check to its
+// goroutine, so a proxy saved in between can replace it too.
+func (u *updater) beginLocked(byClock bool) *updateCheck {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
+	c := &updateCheck{ctx: ctx, cancel: cancel, byClock: byClock}
+	u.checkIn = c
+	u.state, u.err, u.retry, u.mirror, u.asked = "checking", "", false, "", time.Now()
+	return c
+}
+
+// proxyChanged retries a failed check and replaces one still waiting for
+// the feed. An active download keeps its budget and its staged files.
+func (u *updater) proxyChanged() {
 	u.mu.Lock()
+	if u.state != "error" && u.state != "checking" {
+		u.mu.Unlock()
+		return
+	}
+	byClock := false
+	if c := u.checkIn; c != nil {
+		byClock = u.state == "checking" && c.byClock
+		c.cancel()
+	}
+	c := u.beginLocked(byClock)
+	u.mu.Unlock()
+	go u.run(c)
+}
+
+func (u *updater) run(c *updateCheck) {
+	defer func() {
+		c.cancel()
+		u.mu.Lock()
+		if u.checkIn == c {
+			u.checkIn = nil
+		}
+		u.mu.Unlock()
+	}()
+	u.mu.Lock()
+	if u.checkIn != c {
+		u.mu.Unlock()
+		return
+	}
 	lang := u.lang
 	u.mu.Unlock()
 	if lang == "" {
 		lang = notesLang(trayLang(settings.Load().Lang, systemLang))
 	}
-	rel, err := update.LatestIn(ctx, lang)
+	rel, err := latestUpdate(c.ctx, lang)
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	if u.checkIn != c {
+		return
+	}
 	if u.staged != "" && u.latest != nil && (err != nil || !update.Newer(rel.Version, u.latest.Version)) {
 		u.state = "ready" // what was downloaded is still the latest
 		return
@@ -275,7 +320,7 @@ func (u *updater) run() {
 	case u.bundle == "" && u.exe == "":
 		u.state = "available" // the user fetches it from the release page
 		return
-	case u.byClock && u.blocked != nil && u.blocked.Version == rel.Version:
+	case c.byClock && u.blocked != nil && u.blocked.Version == rel.Version:
 		// this computer didn't start it (#894): not downloaded again by
 		// itself; a check asked for tries it once more
 		u.state = "blocked"
@@ -292,7 +337,7 @@ func (u *updater) run() {
 	// nothing to install
 	u.state, u.done, u.total, u.staged = "downloading", 0, 0, ""
 	u.mu.Unlock()
-	ctx = update.WithProgress(ctx, func(done, total int64) {
+	ctx := update.WithProgress(c.ctx, func(done, total int64) {
 		u.mu.Lock()
 		u.done, u.total = done, total
 		u.mu.Unlock()
@@ -539,8 +584,8 @@ func updateRoutes(mux *http.ServeMux, w Windows) {
 				return
 			}
 		case j.State == "error" && j.Retry:
-			if updates.begin() {
-				go updates.run()
+			if c := updates.begin(false); c != nil {
+				go updates.run(c)
 			}
 		case j.State == "available" && j.URL != "":
 			w.OpenURL(j.URL)

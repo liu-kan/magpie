@@ -79,7 +79,9 @@ func TestUpdateMirrorSetting(t *testing.T) {
 		t.Fatalf("through the mirror: %+v", j)
 	}
 	// the next check starts afresh: no mirror said while it runs
-	if !u.begin() || u.json().Mirror != "" {
+	c := u.begin(false)
+	if c == nil || u.json().Mirror != "" {
 		t.Fatalf("begin kept the mirror: %+v", u.json())
 	}
+	defer c.cancel()
 }

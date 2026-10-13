@@ -32,6 +32,44 @@ three.
 
 ## Constraints and failure behavior
 
+### Update checks
+
+[`internal/update/update.go`](../../internal/update/update.go)'s `LatestIn`
+limits a release-feed read to 15 seconds, including the response body; a
+caller's earlier deadline or cancellation still applies. The short limit
+does not cancel the caller's context or change the longer download budget.
+A network that accepts a connection but never answers, including a TUN,
+therefore cannot hold the update check for the download's ten minutes.
+This does not depend on notification of a TUN or network change.
+
+Saving a different proxy through Settings replaces a still-checking or
+failed update in [`update.go`](../../internal/gui/update.go)'s
+`proxyChanged`. It registers the new check before the settings API answers
+and cancels the previous one. Only the current check may publish its
+answer or start a download; a late old success or failure is ignored.
+Replacing an automatic check keeps its origin, so a version previously
+blocked by the system is still not downloaded automatically. A manual
+check keeps its existing retry behavior. An active download is left to
+finish, and a failed recheck keeps a version already staged for installation.
+TUN changes without a settings save are handled by the request's own
+deadline and subsequent manual or scheduled checks, without background
+connectivity probes.
+
+`TestSettingsProxyRechecksAFailedUpdate` uses a controlled lookup failure
+and a local proxy, independent of real DNS. `TestSettingsProxyReplacesAWaitingUpdate`,
+`TestWaitingUpdateEndsWithoutAProxyChange`,
+`TestReplacedUpdateCannotPublishALateAnswer` and
+`TestProxyReplacementKeepsAnAutomaticUpdateBlocked` cover replacement,
+passive failure, late answers and the automatic-check policy.
+`TestProxyCanReplaceAnUpdateBeforeItStarts` covers cancellation before a
+check's goroutine is scheduled; `TestProxyChangeLeavesAnUpdateDownloadRunning`
+keeps a download alive through a proxy change.
+`internal/update`'s `TestLatestBoundsTheWholeFeed`,
+`TestLatestKeepsCallerCancellation` and
+`TestFeedDeadlineLeavesTheDownloadItsBudget` use HTTP over in-process pipes
+and a virtual clock to cover headers, bodies, caller cancellation and a
+download longer than the feed budget.
+
 ### Streamed output speed
 
 Usage rows and aggregates use `Record.Decode` and `DecodeOf` in

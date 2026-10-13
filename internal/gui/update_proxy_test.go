@@ -1,7 +1,9 @@
 package gui
 
 import (
+	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -31,6 +33,13 @@ func TestSettingsProxyRechecksAFailedUpdate(t *testing.T) {
 	for _, k := range []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy"} {
 		t.Setenv(k, "")
 	}
+	// A TUN may give .invalid a Fake-IP and accept its connection forever.
+	// Force the direct lookup to fail here, without asking the real DNS.
+	oldResolver := net.DefaultResolver
+	net.DefaultResolver = &net.Resolver{PreferGo: true, Dial: func(context.Context, string, string) (net.Conn, error) {
+		return nil, &net.DNSError{Err: "no such host", Name: "feed.magpie.invalid", IsNotFound: true}
+	}}
+	defer func() { net.DefaultResolver = oldResolver }()
 	var hits atomic.Int32
 	px := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Host == "feed.magpie.invalid" {
@@ -77,5 +86,62 @@ func TestSettingsProxyRechecksAFailedUpdate(t *testing.T) {
 			t.Fatalf("not checked again through the proxy: %+v, %d through it", j, hits.Load())
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// A proxy set while the feed is still waiting replaces the old check,
+// instead of leaving it to finish through the old network path.
+func TestSettingsProxyReplacesAWaitingUpdate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := settings.Save(settings.Settings{Proxy: "direct"}); err != nil {
+		t.Fatal(err)
+	}
+	entered, stopped := make(chan struct{}), make(chan struct{})
+	var hits atomic.Int32
+	feed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if hits.Add(1) == 1 {
+			close(entered)
+			<-r.Context().Done()
+			close(stopped)
+			return
+		}
+		json.NewEncoder(w).Encode(update.Release{Version: "9.9.9"})
+	}))
+	t.Cleanup(feed.Close)
+	t.Setenv("MAGPIE_UPDATE_FEED", feed.URL)
+	old := updates
+	u := &updater{}
+	updates = u
+	t.Cleanup(func() { updates = old })
+	done := make(chan struct{})
+	go func() { u.check(); close(done) }()
+	// Closing the server first also releases the old check on a failure.
+	t.Cleanup(func() { feed.CloseClientConnections(); <-done })
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the direct check never reached the feed")
+	}
+	rec := httptest.NewRecorder()
+	Handler(nil, nil).ServeHTTP(rec, httptest.NewRequest("POST", "/api/settings", strings.NewReader(`{"proxy":"http://127.0.0.1:7890"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		feed.CloseClientConnections()
+		<-done
+		t.Fatal("saving the proxy did not cancel the waiting update")
+	}
+	<-done
+	deadline := time.Now().Add(5 * time.Second)
+	for u.json().State == "checking" && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if j := u.json(); j.State == "checking" || j.State == "error" || j.Latest != "9.9.9" || hits.Load() != 2 {
+		t.Fatalf("the replacement check: %+v, %d requests", j, hits.Load())
 	}
 }

@@ -80,6 +80,12 @@ func Latest(ctx context.Context) (*Release, error) { return LatestIn(ctx, "") }
 // LatestIn asks the feed for the newest release, its notes in lang (see
 // InLang): the app's language, which What's new follows.
 func LatestIn(ctx context.Context, lang string) (*Release, error) {
+	// The feed is small. A TUN may accept a connection and never answer;
+	// waiting for the download's ten-minute budget leaves the check stuck.
+	// Keep its body under this budget too, without canceling the caller's
+	// context, which may go on to download the release.
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, "GET", withLang(Feed(), lang), nil)
 	if err != nil {
 		return nil, err
