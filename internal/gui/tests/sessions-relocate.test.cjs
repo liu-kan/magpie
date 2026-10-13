@@ -6,7 +6,9 @@
 // button then confirms with the preview's token, and editing the path first
 // asks for a new preview. A folder with a session magpie can't write, or a
 // gateway folder, has no Relocate. In every language, Chromium and WebKit,
-// at a narrow width; no backend, the API is faked here.
+// at a narrow width; no backend, the API is faked here. The new-path field
+// spans the dialog, its label on one line above it, at the reporter's
+// 1320px window as well as narrow ones (#1991, beansiayo).
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -64,7 +66,7 @@ const keys = ["Relocate project", "Relocate Claude Code project", "New absolute 
 
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
   for (const lang of ["en", "zh", "zh-TW", "ja", "de"]) {
-    for (const width of [900, 420]) {
+    for (const width of [1320, 1100, 900, 420]) {
       test(`${engine} ${lang} ${width}px: a Claude Code folder is relocated after a preview, in magpie's own dialog`, async (t) => {
         const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: "chromium" }));
         const page = await (await browser.newContext({ viewport: { width, height: 640 }, reducedMotion: "reduce" })).newPage();
@@ -116,6 +118,19 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
 
         const input = ask.locator("input[type=text]");
         assert.equal(await input.inputValue(), "/work/old-app");
+        // #1991: the label was squeezed into the form's 72px label column,
+        // its text broken over two lines and the path field 72px wide
+        const field = await ask.evaluate((ed) => {
+          const label = ed.querySelector("label"), input = label.querySelector("input");
+          const range = document.createRange();
+          range.selectNodeContents(label.firstChild);
+          const lines = new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size;
+          const box = ed.getBoundingClientRect(), i = input.getBoundingClientRect(), text = range.getBoundingClientRect();
+          return { lines, inputW: i.width, edW: box.width, gap: i.top - text.bottom };
+        });
+        assert.equal(field.lines, 1, "the label's text is on one line");
+        assert(field.inputW >= field.edW - 60, `the path field spans the dialog (${field.inputW} of ${field.edW})`);
+        assert(field.gap >= 4, `the label stands clear of the field (${field.gap}px)`);
         const go = ask.locator("button.primary");
         assert.equal((await go.textContent()).trim(), await tr("Preview relocation"));
         await input.fill("/work/new-app");

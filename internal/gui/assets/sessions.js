@@ -899,7 +899,7 @@
     h.append(icon("claude"), el("b", "", t("Relocate Claude Code project")));
     ed.append(h, el("p", "sub sm-ask-path", (wsl ? `WSL ${wsl}: ` : "") + from));
     ed.append(el("p", "lib-confirm", t("Close Claude Code and its editor sessions first. This moves the entire project's sessions, not just filtered or selected rows. Existing target storage is never overwritten. Desktop-only sessions are not changed.")));
-    const label = el("label", "", t("New absolute project path"));
+    const label = el("label", "sm-ask-field", t("New absolute project path"));
     const input = el("input", "");
     input.type = "text";
     input.value = from;
