@@ -12,7 +12,7 @@ function load(data) {
   const context = vm.createContext({
     groups: data, locale: "en", shown: () => visible, gShown: () => false,
     setTimeout: (fn, ms) => { timer = fn; timerDelay = ms; return 1; }, clearTimeout: () => { timer = null; },
-    t: (s, vars) => Object.entries(vars || {}).reduce((s, [k, v]) => s.replaceAll("{" + k + "}", v), s),
+    t: (s, vars) => Object.entries(vars || {}).reduce((s, [k, v]) => s.replaceAll("{" + k + "}", v), context.locale === "zh" && s === "routing group" ? "路由组" : s),
   });
   vm.runInContext([
     section(app, "function modelTells(", "// tellTag:"),

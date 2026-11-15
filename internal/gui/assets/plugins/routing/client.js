@@ -6307,7 +6307,7 @@ function routingPage(part) {
       groupIndex = { source: groups, models: firstBy(groups?.models), deciders: firstBy(groups?.deciders),
         drawers: firstBy(groups?.drawers), groups: firstBy((groups?.groups || []).filter((g) => !g.hidden), (g) => "group/" + g.id),
         accounts: new Map(Object.entries(groups?.accounts || {}).map(([pid, xs]) => [pid, firstBy(xs)])),
-        off, members: new Map(), info: new WeakMap() };
+        off, members: new Map(), info: new WeakMap(), search: new WeakMap(), searchLocale: locale };
       keepGroupCaches();
     }
     return groupIndex;
@@ -6578,7 +6578,13 @@ function routingPage(part) {
     try { return hayMatches(g, words); } catch { return true; } // a group that can't be read is shown, flagged
   }
   function hayMatches(g, words) {
-    const hay = [g.name, g.id, "group/" + g.id, g.ref || "", ...g.members.flatMap((id) => [id, memberLabel(g, id)]), ...(g.patterns || []).map((p) => p.pattern)].join("\n").toLowerCase();
+    const ix = groupIndexOf();
+    if (ix.searchLocale !== locale) { ix.searchLocale = locale; ix.search = new WeakMap(); }
+    let hay = ix.search.get(g);
+    if (hay === undefined) {
+      hay = [g.name, g.id, "group/" + g.id, g.ref || "", ...g.members.flatMap((id) => [id, memberLabel(g, id)]), ...(g.patterns || []).map((p) => p.pattern)].join("\n").toLowerCase();
+      ix.search.set(g, hay);
+    }
     return words.every((w) => hay.includes(w));
   }
   // rowOrFlag: a group's row, or when drawing it fails, a row that says so

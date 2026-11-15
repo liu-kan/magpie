@@ -200,6 +200,14 @@ rebuilds them from current data. This changes no saved configuration or
 routing behavior. `group-index.test.cjs` checks lookup work, member semantics,
 data replacement and expiry with a controlled clock.
 
+`hayMatches` caches each group's lower-case search text in that same cache.
+Queries retain AND and substring matching over group names, IDs, refs,
+patterns and member labels (including accounts, reasoning and fast/free).
+Changing the language discards the text cache; a new groups response also
+invalidates it, including model/provider/account renames and membership
+changes. Default routing settings and quota readings do not affect search
+text. `group-search-cache.test.cjs` verifies reuse and invalidation.
+
 ### Routing mode chip
 
 The stage's chip and the Accounts and keys heading in
