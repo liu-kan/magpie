@@ -6427,6 +6427,15 @@ func (s *Server) forwardOnce(ctx context.Context, p provider.Provider, to provid
 	if err := p.Sign(ctx, req, to, body); err != nil {
 		return nil, err
 	}
+	// the turn's routing goes on to the account that was given it, as
+	// Codex's own client sends it (codex_turnstate.go)
+	turnAcct, turnOf := codexTurnAccount(p, req.Header), ""
+	if turnAcct != "" {
+		turnOf = codexTurnOf(in, body)
+	}
+	if v := codexTurnStateOf(in, turnAcct, turnOf); v != "" {
+		req.Header.Set("X-Codex-Turn-State", v)
+	}
 	// a sign-in its vendor revoked isn't sent again: the next member is
 	// asked, and the agent told to sign in again (#1793)
 	if why, ok := provider.RevokedSignIn(p.Account, req); ok {
@@ -6499,6 +6508,7 @@ func (s *Server) forwardOnce(ctx context.Context, p provider.Provider, to provid
 	}
 	// what a Codex account's reply says it has used, for its cap (#1295)
 	heardCodexLimits(p, res)
+	heardCodexTurnState(turnAcct, turnOf, res)
 	noteSignIn(ctx, p.Account, req, res)
 	return res, nil
 }
@@ -6916,6 +6926,9 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 	// xAI's own API takes neither a sealed reasoning item's null content
 	// nor a system turn in Messages (xai_body.go, #3392)
 	body = xaiBody(p, proto, body)
+	// a Gemini 3 or later on an Anthropic or Chat relay is asked a
+	// thinking level, never a budget (gemini_level_body.go)
+	body = geminiLevelBody(p, proto, model, body)
 	// a Grok subscription is given Codex's namespaced functions flat
 	// (grokBody), and Zed's plugin likewise (ZedBody); a call to one goes
 	// back under its namespace (#404). Any vendor asked as Codex sends it
@@ -8369,6 +8382,9 @@ func (s *Server) forwardTranslated(ctx context.Context, p provider.Provider, to 
 		// content nor a system turn in Messages (xai_body.go, #3392) —
 		// the built body as the relayed one
 		body = xaiBody(p, to, body)
+		// a Gemini 3 or later on an Anthropic or Chat relay is asked a
+		// thinking level, never a budget (gemini_level_body.go)
+		body = geminiLevelBody(p, to, model, body)
 		if to == provider.CodeAssist && p.Account != nil {
 			// the envelope is named in there, where the id it carries is
 			// known: on Antigravity that is the variant the effort picked,

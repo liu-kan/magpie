@@ -489,6 +489,16 @@ body.side-nav #nav > button[data-plugin-page]:is(:hover, .dragging)::before { op
 #nav.sorting > button[data-plugin-page] { transition: transform .22s cubic-bezier(.22, 1, .36, 1); }
 #nav > button[data-plugin-page].dragging { position: relative; z-index: 2; background: var(--card); box-shadow: 0 6px 18px rgba(20, 22, 30, .12), 0 0 0 1px var(--line); transition: none; }
 body.side-nav #nav button.has-dot::after { top: 50%; right: 10px; margin-top: -3px; width: 6px; height: 6px; }
+/* the row whose tabs are listed folds them (navicons.js navFold): a disclosure
+   chevron, as a Mac sidebar's, turned down to its list, or up for
+   Settings', which opens above its row */
+.nav-fold { display: none; }
+body.side-nav :is(#nav button, #prefs).can-fold > .nav-fold { display: flex; flex: none; margin-left: auto; transition: transform .2s var(--ease-out); }
+body.side-nav :is(#nav button, #prefs).can-fold > .nav-fold > svg { width: 12px; height: 12px; margin: 0; color: var(--muted); }
+body.side-nav #nav button.can-fold[aria-expanded="true"] > .nav-fold { transform: rotate(90deg); }
+body.side-nav #prefs.can-fold[aria-expanded="true"] > .nav-fold { transform: rotate(-90deg); }
+body.side-nav #nav button.has-dot.can-fold::after { right: 28px; }
+@media (prefers-reduced-motion: reduce) { .nav-fold { transition: none !important; } }
 /* the open page's tabs, under it on a thin line */
 .nav-sub { position: relative; display: flex; flex-direction: column; gap: 1px; margin: 2px 0 6px 16px; padding-left: 8px; }
 .nav-sub.moving { overflow: hidden; }
@@ -1087,8 +1097,11 @@ body.panel .row.pref.flash { border-radius: 10px; }
 .subscription-account.brief { margin-bottom: 4px; }
 .quota-acct-fold { align-self: center; display: inline-grid; place-items: center; flex: none; width: 18px; height: 18px; margin: -2px -5px -2px -3px; padding: 0; border-radius: 4px; color: var(--faint); transition: background .12s, color .12s; }
 .subscription-account :is(.user, .acct-eye) + .quota-acct-fold { margin-left: auto; }
+/* one account's card folds from its head's end, before its ⋯ (PILIHU2023 on X) */
+.subscription-head > .quota-acct-fold { margin-left: auto; }
+.subscription-head > :is(.plan, .quota-every, .quota-sum) ~ .quota-acct-fold { margin-left: 2px; }
 .quota-acct-fold:hover { background: var(--pill); color: var(--fg-2); }
-.quota-acct-fold svg { transform: rotate(180deg); transition: transform .15s ease-out; }
+.quota-acct-fold svg { transform: rotate(180deg); transition: transform .15s var(--ease-out); }
 .quota-acct-fold[aria-expanded="false"] svg { transform: none; }
 @media (prefers-reduced-motion: reduce) { .quota-acct-fold svg { transition: none; } }
 .quota-windows.brief { row-gap: 5px; }
@@ -4265,6 +4278,10 @@ input.words.window-in { width: 96px; font-variant-numeric: tabular-nums; }
 /* the masking rules' add row: its words in full, then on a line of their
    own a name, prefix or regex, the match taking the room left, Add */
 .row.pref.rule-row { flex-wrap: wrap; row-gap: 8px; }
+/* three channels: the switch goes under its name when the row is narrow */
+.row.pref.update-channel-row { flex-wrap: wrap; row-gap: 8px; }
+.row.pref.update-channel-row .who { flex: 1 1 14em; min-width: 0; }
+.prefs .row.pref.update-channel-row .val { max-width: 100%; }
 .row.pref.rule-row .who { flex: 1 1 100%; }
 .row.pref.rule-row .sub { white-space: normal; }
 /* Busy models last: six choices don't fit beside their words in a phone-wide
