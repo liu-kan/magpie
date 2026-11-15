@@ -6278,6 +6278,45 @@ function routingPage(part) {
   }
   const slug = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
   let groups = null, gEdit = null; // gEdit: { id: "" for a new one, draft }
+  // Built on first lookup, shared by the stage and the groups page. Maps
+  // point at the current response's objects; they never copy model data.
+  let groupIndex = null, groupIndexTimer = 0;
+  const GROUP_CACHE_KEEP = 5 * 60 * 1000;
+  const firstBy = (xs, key = (x) => x.id) => {
+    const map = new Map();
+    for (const x of xs || []) { const k = key(x); if (!map.has(k)) map.set(k, x); }
+    return map;
+  };
+  function dropGroupCaches() {
+    groupIndex = null;
+    tellsFor = tellsOf = null;
+    groupIndexTimer = 0;
+  }
+  function keepGroupCaches() {
+    if (shown() || gShown()) {
+      clearTimeout(groupIndexTimer);
+      groupIndexTimer = 0;
+    } else if (groupIndex && !groupIndexTimer) groupIndexTimer = setTimeout(dropGroupCaches, GROUP_CACHE_KEEP);
+  }
+  function groupIndexOf() {
+    if (!groupIndex || groupIndex.source !== groups) {
+      const off = new Map();
+      for (const g of groups?.groups || []) for (const i of g.memberInfo || []) {
+        if (i.providerOff && !off.has(i.id)) off.set(i.id, i);
+      }
+      groupIndex = { source: groups, models: firstBy(groups?.models), deciders: firstBy(groups?.deciders),
+        drawers: firstBy(groups?.drawers), groups: firstBy((groups?.groups || []).filter((g) => !g.hidden), (g) => "group/" + g.id),
+        accounts: new Map(Object.entries(groups?.accounts || {}).map(([pid, xs]) => [pid, firstBy(xs)])),
+        off, members: new Map(), info: new WeakMap() };
+      keepGroupCaches();
+    }
+    return groupIndex;
+  }
+  function memberInfoOf(g, id) {
+    const ix = groupIndexOf();
+    if (!ix.info.has(g)) ix.info.set(g, firstBy(g.memberInfo));
+    return ix.info.get(g).get(id);
+  }
   // poolOf is the provider's own routing over several accounts or keys,
   // none while it has one on (or before the groups are in)
   function poolOf(id) {
@@ -6370,14 +6409,19 @@ function routingPage(part) {
   // splitMember's third is that account's id, "" for every account
   function splitMember(id) {
     id = id || "";
-    let acct = "";
+    const ix = groupIndexOf();
+    if (ix.members.has(id)) return ix.members.get(id);
+    const original = id;
+    let acct = "", level = "";
     const a = id.startsWith("group/") ? null : /^(.+)#([^#/]+)$/.exec(id);
     if (a && a[2].trim()) { id = a[1]; acct = a[2].trim(); }
-    if (id.startsWith("group/") || groups?.models.some((m) => m.id === id) || groups?.drawers?.some((m) => m.id === id)) return [id, "", acct];
-    const m = /^(.+):((?:none|minimal|low|medium|high|xhigh|max)(?:\+(?:none|minimal|low|medium|high|xhigh|max))*)$/i.exec(id);
-    if (!m) return [id, "", acct];
-    const parts = m[2].toLowerCase().split("+");
-    return [m[1], LEVELS.filter((v) => parts.includes(v)).join("+"), acct];
+    if (!id.startsWith("group/") && !ix.models.has(id) && !ix.drawers.has(id)) {
+      const m = /^(.+):((?:none|minimal|low|medium|high|xhigh|max)(?:\+(?:none|minimal|low|medium|high|xhigh|max))*)$/i.exec(id);
+      if (m) { id = m[1]; const parts = m[2].toLowerCase().split("+"); level = LEVELS.filter((v) => parts.includes(v)).join("+"); }
+    }
+    const parts = [id, level, acct];
+    ix.members.set(original, parts);
+    return parts;
   }
   // a member's id from its model, reasoning and account
   const memberId = (model, level, acct) => (level ? `${model}:${level}` : model) + (acct ? "#" + acct : "");
@@ -6388,17 +6432,22 @@ function routingPage(part) {
     if (!acct || subOf(id)) return null;
     const pid = modelOf(id)?.provider || model.split("/")[0];
     const full = pid + "/" + acct;
-    const a = (groups?.accounts?.[pid] || []).find((x) => x.id === full);
+    const a = groupIndexOf().accounts.get(pid)?.get(full);
     return { id: full, name: a?.name || acct, plan: a?.plan || "" };
   };
   // a decision model (Jev) is a member of a group of decision models only,
   // asked at /v1/systemone (provider/decide_group.go): it is in
   // groups.deciders, not groups.models
-  const deciderOf = (id) => groups?.deciders?.find((m) => m.id === splitMember(id)[0]);
+  const deciderOf = (id) => groupIndexOf().deciders.get(splitMember(id)[0]);
   // an image model (jzw690 on X) is in groups.drawers: a group holding it
   // draws on it at the images API, and it takes no reasoning
-  const drawerOf = (id) => groups?.drawers?.find((m) => m.id === id);
-  const modelOf = (id) => groups?.models.find((m) => m.id === id) || groups?.models.find((m) => m.id === splitMember(id)[0]) || deciderOf(id) || drawerOf(id);
+  const drawerOf = (id) => groupIndexOf().drawers.get(id);
+  const modelOf = (id) => {
+    const ix = groupIndexOf(), exact = ix.models.get(id);
+    if (exact) return exact;
+    const base = splitMember(id)[0];
+    return ix.models.get(base) || ix.deciders.get(base) || ix.drawers.get(id);
+  };
   // a group's patterns (#766, provider.IsPattern): a glob, * any run of
   // characters over the provider/model id, or re:<regexp> over the whole
   // id, both in any case (provider.compilePattern). The group keeps them,
@@ -6442,7 +6491,7 @@ function routingPage(part) {
   const fixedOf = (id) => subOf(id) ? "" : splitMember(id)[1];
   const fixedWords = (level) => t("{level} reasoning", { level: level.split("+").join(" / ") });
   // a routing group among a group's members: group/<id>
-  const subOf = (id) => id?.startsWith("group/") ? groups?.groups.find((x) => "group/" + x.id === id && !x.hidden) : null;
+  const subOf = (id) => id?.startsWith("group/") ? groupIndexOf().groups.get(id) : null;
   // a group's editor, its draft being the group as it is now. The group's own
   // card opens it, and so does a group that is a member of another: such a
   // member takes no reasoning of its own (provider.SaveGroup refuses
@@ -6466,7 +6515,7 @@ function routingPage(part) {
   // offOf: a member whose provider is switched off (groupsState's
   // providerOff), said by its provider's name and model rather than a bare
   // id: the group skips it until the provider is on again
-  const offOf = (id) => { for (const g of groups?.groups || []) { const i = g.memberInfo?.find((x) => x.id === id && x.providerOff); if (i) return i; } };
+  const offOf = (id) => groupIndexOf().off.get(id);
   const offWords = (i) => t("{name} is switched off: the group skips it until it is on again", { name: i.name });
   const memberIcon = (id) => { const s = subOf(id); return s ? stackIcon(groupIcons(s)) : icon(modelOf(id)?.icon || offOf(id)?.icon || "generic"); };
   // models of one provider that would read alike (several "DeepSeek-V4.1-Flash"
@@ -6487,9 +6536,9 @@ function routingPage(part) {
   // provider is Free for me, or its vendor serves it free (memberJSON.Free),
   // said whatever the group's routing, so it shows before Free first is
   // picked (jiabubu on Discord)
-  const freeIn = (g, id) => !!g?.memberInfo?.find((x) => x.id === id)?.free;
+  const freeIn = (g, id) => !!(g && memberInfoOf(g, id)?.free);
   function memberLabel(g, id) {
-    const i = g.memberInfo?.find((x) => x.id === id), m = modelOf(id), s = subOf(id), f = fixedOf(id);
+    const i = memberInfoOf(g, id), m = modelOf(id), s = subOf(id), f = fixedOf(id);
     if (s) return `${t("routing group")} · ${s.name}`;
     const acct = memberAccount(id);
     const at = (acct ? ` · ${acct.name}` : "") + (f ? ` · ${fixedWords(f)}` : "") + (fastIn(g, id) ? ` · ${t("fast")}` : "") + (freeIn(g, id) ? ` · ${t("free")}` : "");
@@ -9116,6 +9165,8 @@ function routingPage(part) {
   // on either page: Routing names the groups too (its stage, the story)
   for (const v of [$("#view-routing"), gView()]) new MutationObserver(() => { if (!v.hidden) loadGroups(true); }).observe(v, { attributes: true, attributeFilter: ["hidden"] });
   window.addEventListener("focus", () => { if (shown() || gShown()) loadGroups(true); });
+  for (const v of [$("#view-routing"), gView()]) new MutationObserver(keepGroupCaches).observe(v, { attributes: true, attributeFilter: ["hidden"] });
+  document.addEventListener("visibilitychange", keepGroupCaches);
   // the groups' rows say what is left of their accounts, drawn again when
   // the Usage page's readings come while the page is open (Routing's own
   // second does it there); the page may be open already, from ?view=groups

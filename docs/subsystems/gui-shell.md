@@ -185,6 +185,21 @@ filter only when that request is excluded. Usage's purpose picker remains a
 single choice sent to the ledger API. See `purpose-filter.test.cjs` and
 `routing-purpose-state.test.cjs`.
 
+### Routing group lookup caches
+
+The routing script's `groupIndexOf` in
+[`plugins/routing/client.js`](../../internal/gui/assets/plugins/routing/client.js)
+lazily indexes the current `/api/groups` response by model, group and account
+ID and caches parsed member IDs. Exact model IDs take precedence over
+reasoning suffixes; duplicate IDs retain the first match, as array lookup did.
+A new response replaces the indexes on the next lookup. The maps reference
+response objects, not copies. They serve both Routing and Routing groups,
+and are released after both pages have been out of sight for five minutes
+(including a hidden browser tab); returning cancels expiry. A later lookup
+rebuilds them from current data. This changes no saved configuration or
+routing behavior. `group-index.test.cjs` checks lookup work, member semantics,
+data replacement and expiry with a controlled clock.
+
 ### Routing mode chip
 
 The stage's chip and the Accounts and keys heading in
