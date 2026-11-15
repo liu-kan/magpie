@@ -18,7 +18,7 @@ function load(data) {
     section(app, "function modelTells(", "// tellTag:"),
     section(source, "  // Built on first lookup,", "  // poolOf is"),
     section(source, "  const LEVELS =", "  // a group's editor,"),
-    section(source, "  const offOf =", "  function renderGroups()"),
+    section(source, "  const offOf =", "  function renderGroups("),
     section(source, "  function groupMatches(", "  // rowOrFlag:"),
     `globalThis.api = { splitMember, modelOf, memberAccount, memberLabel, subOf, offOf, freeIn, groupMatches,
       refresh: (x) => { groups = x; }, lang: (x) => { locale = x; },

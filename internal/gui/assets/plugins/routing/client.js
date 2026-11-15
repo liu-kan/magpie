@@ -6281,6 +6281,7 @@ function routingPage(part) {
   // Built on first lookup, shared by the stage and the groups page. Maps
   // point at the current response's objects; they never copy model data.
   let groupIndex = null, groupIndexTimer = 0;
+  let groupRows = new Map(), groupRowsFor = null, groupRowsLocale = "", groupImportRow = null;
   const GROUP_CACHE_KEEP = 5 * 60 * 1000;
   const firstBy = (xs, key = (x) => x.id) => {
     const map = new Map();
@@ -6290,13 +6291,15 @@ function routingPage(part) {
   function dropGroupCaches() {
     groupIndex = null;
     tellsFor = tellsOf = null;
+    groupRows.clear();
+    groupRowsFor = groupImportRow = null;
     groupIndexTimer = 0;
   }
   function keepGroupCaches() {
     if (shown() || gShown()) {
       clearTimeout(groupIndexTimer);
       groupIndexTimer = 0;
-    } else if (groupIndex && !groupIndexTimer) groupIndexTimer = setTimeout(dropGroupCaches, GROUP_CACHE_KEEP);
+    } else if ((groupIndex || groupRows.size) && !groupIndexTimer) groupIndexTimer = setTimeout(dropGroupCaches, GROUP_CACHE_KEEP);
   }
   function groupIndexOf() {
     if (!groupIndex || groupIndex.source !== groups) {
@@ -6546,11 +6549,11 @@ function routingPage(part) {
     if (i?.providerOff) return `${i.name} · ${i.model}${at} (${t("switched off")})`;
     return i?.name ? `${i.name} · ${i.model}${at}` : id;
   }
-  function renderGroups() {
+  function renderGroups(filterOnly = false) {
     if (!groups) return;
     // not under a row being dragged: it is drawn when let go
     if (groupArranging) { groupRenderPending = true; return; }
-    steady(drawGroups, gView());
+    steady(() => drawGroups(filterOnly), gView());
   }
   // gSel: the groups picked to be removed together, while picking (lc on
   // Discord: they could only be removed one at a time); null otherwise
@@ -6562,8 +6565,8 @@ function routingPage(part) {
   gQ.type = "search";
   gQ.spellcheck = false;
   gQ.autocomplete = "off";
-  gQ.oninput = () => renderGroups();
-  gQ.onkeydown = (e) => { if (e.key === "Escape" && gQ.value) { e.stopPropagation(); gQ.value = ""; renderGroups(); } };
+  gQ.oninput = () => renderGroups(true);
+  gQ.onkeydown = (e) => { if (e.key === "Escape" && gQ.value) { e.stopPropagation(); gQ.value = ""; renderGroups(true); } };
   // gImport: Import a group's box (laincatx on X): the text pasted, kept
   // in the page across redraws as gQ is, and what the import added and
   // left out once it has; null while closed
@@ -6636,8 +6639,17 @@ function routingPage(part) {
     }
     return lines;
   }
-  function drawGroups() {
-    groupsQuotas = typeof quotas === "undefined" ? undefined : quotas;
+  function drawGroups(filterOnly = false) {
+    // Only input uses this path. Data, language, settings and quota redraws
+    // replace the row cache, so its event handlers always use current data.
+    filterOnly = filterOnly && groupRowsFor === groups && groupRowsLocale === locale;
+    if (!filterOnly) {
+      groupRows = new Map();
+      groupRowsFor = groups;
+      groupRowsLocale = locale;
+      groupImportRow = null;
+    }
+    if (!filterOnly) groupsQuotas = typeof quotas === "undefined" ? undefined : quotas;
     // the ones switched off are listed after the ones on, each part in the
     // order the user set (justacati on X); moving one still moves it in
     // that order, which is the one agents' pickers show
@@ -6648,60 +6660,66 @@ function routingPage(part) {
     const shown = words.length ? all.filter((g) => gEdit?.id === g.id || groupMatches(g, words)) : all;
     if (gSel) gSel = new Set([...gSel].filter((id) => shown.some((g) => g.id === id)));
     if (gSel && !all.length) gSel = null;
-    // the page's toolbar (11-06): the filter and how many there are on the
-    // left, what makes or picks groups on the right, New group the one
-    // filled button
-    const newBtn = el("button", "text primary rt-gnew");
-    newBtn.type = "button";
-    newBtn.dataset.feature = "groups"; // off with them, as the note says
-    newBtn.append(svg(PLUS, 11, 1.8), el("span", "", t("New group")));
-    newBtn.title = t("Make a routing group of any models you like — agents pick it as one model");
-    newBtn.onclick = () => newGroup();
-    gBack.lastChild.textContent = t("Routing"); // in the language now
-    const head = [gBack];
-    if (all.length > 1 || gQ.value) {
-      gQ.placeholder = t("Filter groups and models");
-      gQ.setAttribute("aria-label", gQ.placeholder);
-      head.push(gQ);
-    }
-    if (all.length) head.push(el("span", "note rt-gcount", t("{n} groups · {m} on", { n: all.length, m: all.filter((g) => !g.disabled).length })));
-    head.push(el("span", "grow"));
-    // templates: a group for a common need made of the user's own models
-    // in a click (provider.Templates). Cards while the user has no group of
-    // their own, a menu by New group after
     const own = all.some((g) => !g.auto), tpls = groups.templates || [];
-    if (!gSel) {
-      if (own && tpls.length) head.push(templateButton(tpls));
-      const imp = el("button", "text rt-gimportbtn", t("Import"));
-      imp.type = "button";
-      imp.title = t("Add a routing group someone shared from their magpie");
-      imp.setAttribute("aria-expanded", gImport ? "true" : "false");
-      imp.onclick = () => gImport ? closeImport() : openImport();
-      head.push(imp);
-      // several removed at once: pick them, then Remove
-      if (all.length > 1) {
-        const pick = el("button", "text rt-gselect", t("Select"));
-        pick.title = t("Pick several groups to remove together");
-        pick.onclick = async () => {
-          if (groupDirty() && !(await confirmDiscard())) return;
-          gEdit = null; gSel = new Set(); renderGroups();
-        };
-        head.push(pick);
+    if (!filterOnly) {
+      // the page's toolbar (11-06): the filter and how many there are on the
+      // left, what makes or picks groups on the right, New group the one
+      // filled button
+      const newBtn = el("button", "text primary rt-gnew");
+      newBtn.type = "button";
+      newBtn.dataset.feature = "groups"; // off with them, as the note says
+      newBtn.append(svg(PLUS, 11, 1.8), el("span", "", t("New group")));
+      newBtn.title = t("Make a routing group of any models you like — agents pick it as one model");
+      newBtn.onclick = () => newGroup();
+      gBack.lastChild.textContent = t("Routing"); // in the language now
+      const head = [gBack];
+      if (all.length > 1 || gQ.value) {
+        gQ.placeholder = t("Filter groups and models");
+        gQ.setAttribute("aria-label", gQ.placeholder);
+        head.push(gQ);
       }
-      head.push(newBtn);
+      if (all.length) head.push(el("span", "note rt-gcount", t("{n} groups · {m} on", { n: all.length, m: all.filter((g) => !g.disabled).length })));
+      head.push(el("span", "grow"));
+      // templates: a group for a common need made of the user's own models
+      // in a click (provider.Templates). Cards while the user has no group of
+      // their own, a menu by New group after
+      if (!gSel) {
+        if (own && tpls.length) head.push(templateButton(tpls));
+        const imp = el("button", "text rt-gimportbtn", t("Import"));
+        imp.type = "button";
+        imp.title = t("Add a routing group someone shared from their magpie");
+        imp.setAttribute("aria-expanded", gImport ? "true" : "false");
+        imp.onclick = () => gImport ? closeImport() : openImport();
+        head.push(imp);
+        // several removed at once: pick them, then Remove
+        if (all.length > 1) {
+          const pick = el("button", "text rt-gselect", t("Select"));
+          pick.title = t("Pick several groups to remove together");
+          pick.onclick = async () => {
+            if (groupDirty() && !(await confirmDiscard())) return;
+            gEdit = null; gSel = new Set(); renderGroups();
+          };
+          head.push(pick);
+        }
+        head.push(newBtn);
+      }
+      // the filter stays in the page as the rest of the row is drawn again,
+      // so the key being typed into it lands once (#1055)
+      replaceKeeping(gHead, head);
+      drawFound();
+      drawNames();
+      drawDefaults();
     }
-    // the filter stays in the page as the rest of the row is drawn again,
-    // so the key being typed into it lands once (#1055)
-    replaceKeeping(gHead, head);
-    drawFound();
-    drawNames();
-    drawDefaults();
     const rows = [];
     if (!gSel && !own && !words.length && tpls.length) rows.push(templateCards(tpls));
     if (gSel) rows.push(selectBar(shown));
-    if (gImport && !gSel) rows.push(importBox());
-    if (gEdit && !gEdit.id) rows.push(groupEditor(null));
-    for (const g of shown) rows.push(rowOrFlag(g, () => gSel ? pickedRow(g) : gEdit?.id === g.id ? groupEditor(g) : groupRow(g)));
+    if (gImport && !gSel) { groupImportRow ||= importBox(); rows.push(groupImportRow); }
+    const rowFor = (id, draw) => {
+      if (!groupRows.has(id)) groupRows.set(id, draw());
+      return groupRows.get(id);
+    };
+    if (gEdit && !gEdit.id) rows.push(rowFor("", () => groupEditor(null)));
+    for (const g of shown) rows.push(rowFor(g.id, () => rowOrFlag(g, () => gSel ? pickedRow(g) : gEdit?.id === g.id ? groupEditor(g) : groupRow(g))));
     if (!rows.length && all.length) rows.push(el("div", "none rt-gnone", t("No group or model matches “{q}”", { q: gQ.value.trim() })));
     if (!rows.length) rows.push(el("div", "none rt-gnone", groups.found === false
       ? t("No group yet. New group makes one of any models you like.")
@@ -6728,10 +6746,9 @@ function routingPage(part) {
       rows.push(h);
     }
     // the import box's text stays in the page as the list is drawn again
-    const was = slotsOf();
+    const was = filterOnly ? null : slotsOf();
     replaceKeeping(gList, rows);
-    morphSlots(was);
-    renderPools();
+    if (!filterOnly) { morphSlots(was); renderPools(); }
   }
   // A group's row opens into its editor and folds back into it, as a cell
   // does on iOS (the owner, 10-23): its slot goes from the height it had to

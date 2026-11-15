@@ -208,6 +208,23 @@ invalidates it, including model/provider/account renames and membership
 changes. Default routing settings and quota readings do not affect search
 text. `group-search-cache.test.cjs` verifies reuse and invalidation.
 
+The group's input event and Escape use `drawGroups`' filter-only path:
+matching cards are retained, unmatched cards detached and reused if the
+query changes back. The toolbar, settings and provider pools are left in
+place, and an open editor and import text keep their live DOM and draft.
+Bulk selection still drops groups outside the query and rebuilds its
+selection controls for the shown list. A data, language, settings or quota
+redraw discards the row cache; filtering also falls back to a full redraw
+when the data or language changed since the last one. A filter-only draw
+does not mark new quota readings as painted: after the input loses focus,
+the usual quota tick refreshes the cards. Detached cards are
+released with the lookup cache after five minutes away. This is display
+only; saving, ordering and routing semantics are unchanged.
+`group-filter-render.test.cjs` exercises node reuse, drafts and expiry with
+4,000 models in both browser engines and all five languages; existing
+`filter-ime`, `group-pick-filter`, `group-bulk-remove`, `group-arrange`,
+`group-import-replace` and `group-morph` tests cover their neighboring flows.
+
 ### Routing mode chip
 
 The stage's chip and the Accounts and keys heading in
